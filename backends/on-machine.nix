@@ -60,6 +60,15 @@ let
           echo "All secrets for ${gen.name} are present"
         elif [ $all_files_missing = true ] ; then
 
+          # templates
+          templates=$(mktemp -d)
+          trap 'rm -rf $templates' EXIT
+          export templates
+          mkdir -p "$templates"
+          ${lib.concatMapStringsSep "\n" (file: ''
+            cp "${file.template}" "$templates/${file.name}"
+          '') (lib.filter (file: file.template != null) (lib.attrValues gen.files))}
+
           # prompts
           prompts=$(mktemp -d)
           trap 'rm -rf $prompts' EXIT

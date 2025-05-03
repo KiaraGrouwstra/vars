@@ -119,6 +119,21 @@
                       type = lib.types.nullOr lib.types.str;
                       default = null;
                     };
+                    placeholder = lib.mkOption {
+                      description = ''
+                        A placeholder that may be used to safely reference the variable in a template.
+                      '';
+                      readOnly = true;
+                      default = "<VARS:${builtins.hashString "sha256" "${generator.config.name}:${file.config.name}"}:PLACEHOLDER>";
+                    };
+                    template = lib.mkOption {
+                      description = ''
+                        A template file with placeholders from the generator's dependencies.
+                        These will be substituted.
+                      '';
+                      type = lib.types.nullOr lib.types.path;
+                      default = null;
+                    };
                   };
                 })
               );
@@ -185,6 +200,8 @@
                   - $in: The directory containing the output values of all declared dependencies
                   - $out: The output directory to put the generated files
                   - $prompts: The directory containing the prompted values as files
+                  - $templates: The template files, with placeholders - to be replaced in the script like
+                      cat $templates/foo | sed "s/''${config.vars.generators.bar.files.baz.placeholder}/$(cat "$in/bar/baz")/g" > "$out/foo"
                 The script should produce the files specified in the 'files' attribute under $out.
               '';
               type = lib.types.either lib.types.str lib.types.path;
