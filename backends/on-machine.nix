@@ -33,7 +33,9 @@ let
 
       # check if all files are present or all files are missing
       # if not, they are in an inconsistent state and we bail out
-      ${lib.concatMapStringsSep "\n" (gen: ''
+      ${lib.concatMapStringsSep "\n" (gen: let
+        templates = lib.filter (file: file.template != null) (lib.attrValues gen.files);
+      in ''
         all_files_missing=true
         all_files_present=true
         echo "Checking vars for ${gen.name}..."
@@ -71,21 +73,34 @@ let
             echo -n "$prompt_value" > "$prompts"/${prompt.name}
           '') (lib.attrValues gen.prompts)}
           echo "Generating vars for ${gen.name}"
+        fi
 
-          # dependencies
-          in=$(mktemp -d)
-          trap 'rm -rf $in' EXIT
-          export in
-          mkdir -p "$in"
-          ${lib.concatMapStringsSep "\n" (input: ''
-            mkdir -p "$in"/${input}
-            ${lib.concatMapStringsSep "\n" (file: ''
-              cp "$OUT_DIR"/${
-                if file.secret then "secret" else "public"
-              }/${input}/${file.name} "$in"/${input}/${file.name}
-            '') (lib.attrValues config.vars.generators.${input}.files)}
-          '') gen.dependencies}
+        # dependencies
+        in=$(mktemp -d)
+        export in
+        trap 'rm -rf $in' EXIT
+        mkdir -p "$in"
+        ${lib.concatMapStringsSep "\n" (input: ''
+          mkdir -p "$in"/${input}
+          ${lib.concatMapStringsSep "\n" (file: ''
+            cp "$OUT_DIR"/${
+              if file.secret then "secret" else "public"
+            }/${input}/${file.name} "$in"/${input}/${file.name}
+          '') (lib.attrValues config.vars.generators.${input}.files)}
+        '') gen.dependencies}
 
+        # templates
+        templates=$(mktemp -d)
+        trap 'rm -rf $templates' EXIT
+        export templates
+        mkdir -p "$templates"
+        ${lib.concatMapStringsSep "\n" (file: ''
+          cp "${file.template}" "$templates/${file.name}"
+        '') templates}
+
+        # generate if all are missing or we have templates
+        # shellcheck disable=SC2078
+        if [ $all_files_missing = true ] || [ "${lib.concatMapStringsSep "" (file: file.name) templates}" ] ; then
           (
             # prepare PATH
             unset PATH
