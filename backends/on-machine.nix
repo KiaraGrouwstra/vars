@@ -111,6 +111,8 @@ let
             OUT_FILE="$OUT_DIR"/${if file.secret then "secret" else "public"}/${file.generator}/${file.name}
             mkdir -p "$(dirname "$OUT_FILE")"
             mv "$out"/${file.name} "$OUT_FILE"
+            chown ${file.owner}:${file.group} "''${OUT_FILE}"
+            chmod ${file.mode} "''${OUT_FILE}"
           '') (lib.attrValues gen.files)}
           rm -rf "$out"
         fi
