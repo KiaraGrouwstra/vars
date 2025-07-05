@@ -1,4 +1,5 @@
 {
+  _class,
   lib,
   config,
   pkgs,
