@@ -145,5 +145,13 @@ in
       generate-vars
     ];
     system.build.generate-vars = generate-vars;
+
+    systemd.services.generate-vars = {
+       wantedBy = [ "multi-user.target" ];
+       after = [ "default.target" ];
+       description = "generate needed secrets";
+       path = [ generate-vars ];
+       serviceConfig.ExecStart = "${generate-vars}/bin/generate-vars";
+    };
   };
 }
