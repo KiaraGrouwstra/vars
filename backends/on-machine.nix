@@ -24,7 +24,7 @@ let
   generate-vars = pkgs.writeShellApplication {
     name = "generate-vars";
     text = ''
-      set -efuo pipefail
+      set -exfuo pipefail
 
       PATH=${lib.makeBinPath [ pkgs.coreutils ]}
 
