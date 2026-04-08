@@ -13,9 +13,12 @@ let
     (lib.toposort (a: b: builtins.elem a.name b.dependencies) (lib.attrValues config.vars.generators))
     .result;
 
+  flushStdin = ''
+    if [ -t 0 ]; then while IFS= read -r -t 0.1 _discard; do :; done; fi
+  '';
   promptCmd = {
-    hidden = "read -sr prompt_value";
-    line = "read -r prompt_value";
+    hidden = "read -sr prompt_value; ${flushStdin}";
+    line = "read -r prompt_value; ${flushStdin}";
     multiline = ''
       echo 'press control-d to finish'
       prompt_value=$(cat)
