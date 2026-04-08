@@ -1,6 +1,6 @@
-# we use this vars backend as an example backend.
-# this generates a script which creates the values at the expected path.
-# this script has to be run manually (I guess after updating the system) to generate the required vars.
+# On-machine vars backend.
+# Generates secrets and stores them directly on the local filesystem.
+# Run `generate-vars` after updating the system to create the required values.
 {
   pkgs,
   lib,
@@ -9,134 +9,29 @@
 }:
 let
   cfg = config.vars.settings.on-machine;
-  sortedGenerators =
-    (lib.toposort (a: b: builtins.elem a.name b.dependencies) (lib.attrValues config.vars.generators))
-    .result;
 
-  promptCmd = {
-    hidden = "read -sr prompt_value";
-    line = "read -r prompt_value";
-    multiline = ''
-      echo 'press control-d to finish'
-      prompt_value=$(cat)
-    '';
-  };
-  generate-vars = pkgs.writeShellApplication {
-    name = "generate-vars";
-    text = ''
-      set -efuo pipefail
+  varsLib = import ../lib.nix { inherit pkgs lib config; };
 
-      PATH=${lib.makeBinPath [ pkgs.coreutils ]}
+  filePath =
+    file:
+    "${cfg.fileLocation}/${if file.secret then "secret" else "public"}/${file.generator}/${file.name}";
 
-      # make the output directory overridable
+  generate-vars = varsLib.mkGenerateVars {
+    preamble = ''
       OUT_DIR=''${OUT_DIR:-${cfg.fileLocation}}
-
-      # check if all files are present or all files are missing
-      # if not, they are in an inconsistent state and we bail out
-      ${lib.concatMapStringsSep "\n" (gen: let
-        templates = lib.filter (file: file.template != null) (lib.attrValues gen.files);
-      in ''
-        all_files_missing=true
-        all_files_present=true
-        echo "Checking vars for ${gen.name}..."
-        ${lib.concatMapStringsSep "\n" (file: ''
-          OUT_FILE="$OUT_DIR"/${if file.secret then "secret" else "public"}/${file.generator}/${file.name}
-          if test -e "$OUT_FILE"; then
-            all_files_missing=false
-          else
-            all_files_present=false
-          fi
-        '') (lib.attrValues gen.files)}
-
-        # outputs
-        out=$(mktemp -d)
-        trap 'rm -rf $out' EXIT
-        export out
-        mkdir -p "$out"
-
-        if [ $all_files_missing = false ] && [ $all_files_present = false ] ; then
-          echo "Inconsistent state for generator: ${gen.name}"
-          exit 1
-        fi
-        if [ $all_files_present = true ] ; then
-          echo "All secrets for ${gen.name} are present"
-        elif [ $all_files_missing = true ] ; then
-
-          # prompts
-          prompts=$(mktemp -d)
-          trap 'rm -rf $prompts' EXIT
-          export prompts
-          mkdir -p "$prompts"
-          ${lib.concatMapStringsSep "\n" (prompt: ''
-            echo ${lib.escapeShellArg prompt.description}
-            ${promptCmd.${prompt.type}}
-            echo -n "$prompt_value" > "$prompts"/${prompt.name}
-          '') (lib.attrValues gen.prompts)}
-          echo "Generating vars for ${gen.name}"
-        fi
-
-        # dependencies
-        in=$(mktemp -d)
-        export in
-        trap 'rm -rf $in' EXIT
-        mkdir -p "$in"
-        ${lib.concatMapStringsSep "\n" (input: ''
-          mkdir -p "$in"/${input}
-          ${lib.concatMapStringsSep "\n" (file: ''
-            cp "$OUT_DIR"/${
-              if file.secret then "secret" else "public"
-            }/${input}/${file.name} "$in"/${input}/${file.name}
-          '') (lib.attrValues config.vars.generators.${input}.files)}
-        '') gen.dependencies}
-
-        # templates
-        templates=$(mktemp -d)
-        trap 'rm -rf $templates' EXIT
-        export templates
-        mkdir -p "$templates"
-        ${lib.concatMapStringsSep "\n" (file: ''
-          cp "${file.template}" "$templates/${file.name}"
-        '') templates}
-
-        # generate if all are missing or we have templates
-        # shellcheck disable=SC2078
-        if [ $all_files_missing = true ] || [ "${lib.concatMapStringsSep "" (file: file.name) templates}" ] ; then
-          (
-            # prepare PATH
-            unset PATH
-            ${lib.optionalString (gen.runtimeInputs != [ ]) ''
-              PATH=${lib.makeBinPath gen.runtimeInputs}
-              export PATH
-            ''}
-
-            # actually run the generator
-            ${gen.script}
-          )
-
-          # check if all files got generated
-          ${lib.concatMapStringsSep "\n" (file: ''
-            if ! test -e "$out"/${file.name} ; then
-              echo 'generator ${gen.name} failed to generate ${file.name}'
-              exit 1
-            fi
-          '') (lib.attrValues gen.files)}
-
-          # move the files to the correct location
-          ${lib.concatMapStringsSep "\n" (file: ''
-            OUT_FILE="$OUT_DIR"/${if file.secret then "secret" else "public"}/${file.generator}/${file.name}
-            mkdir -p "$(dirname "$OUT_FILE")"
-            mv "$out"/${file.name} "$OUT_FILE"
-          '') (lib.attrValues gen.files)}
-        fi
-
-        # move the files to the correct location
-        ${lib.concatMapStringsSep "\n" (file: ''
-          OUT_FILE="$OUT_DIR"/${if file.secret then "secret" else "public"}/${file.generator}/${file.name}
-          chown ${file.owner}:${file.group} "''${OUT_FILE}"
-          chmod ${file.mode} "''${OUT_FILE}"
-        '') (lib.attrValues gen.files)}
-        rm -rf "$out"
-      '') sortedGenerators}
+    '';
+    checkFileExists = _gen: file: ''
+      test -e "$OUT_DIR"/${if file.secret then "secret" else "public"}/${file.generator}/${file.name}
+    '';
+    fetchDependency = dep: file: ''
+      cp "$OUT_DIR"/${if file.secret then "secret" else "public"}/${dep}/${file.name} "$in"/${dep}/${file.name}
+    '';
+    uploadFile = _gen: file: ''
+      OUT_FILE="$OUT_DIR"/${if file.secret then "secret" else "public"}/${file.generator}/${file.name}
+      mkdir -p "$(dirname "$OUT_FILE")"
+      mv "$out"/${file.name} "$OUT_FILE"
+      chown ${file.owner}:${file.group} "$OUT_FILE"
+      chmod ${file.mode} "$OUT_FILE"
     '';
   };
 in
@@ -148,25 +43,20 @@ in
       default = "/etc/vars";
     };
   };
+
   config = lib.mkIf cfg.enable {
     vars.settings.fileModule = file: {
-      path =
-        if file.config.secret then
-          "${cfg.fileLocation}/secret/${file.config.generator}/${file.config.name}"
-        else
-          "${cfg.fileLocation}/public/${file.config.generator}/${file.config.name}";
+      path = filePath file.config;
     };
-    environment.systemPackages = [
-      generate-vars
-    ];
+
+    environment.systemPackages = [ generate-vars ];
     system.build.generate-vars = generate-vars;
 
     systemd.services.generate-vars = {
-       wantedBy = [ "multi-user.target" ];
-       after = [ "default.target" ];
-       description = "generate needed secrets";
-       path = [ generate-vars ];
-       serviceConfig.ExecStart = "${generate-vars}/bin/generate-vars";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "default.target" ];
+      description = "generate needed secrets";
+      serviceConfig.ExecStart = "${generate-vars}/bin/generate-vars";
     };
   };
 }
