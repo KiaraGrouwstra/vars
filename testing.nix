@@ -5,13 +5,31 @@
   meta.maintainers = with lib.maintainers; [ lassulus ];
 
   nodes.machine =
-    { ... }:
+    { pkgs, ... }:
     {
       imports = [
         ./options.nix
         ./backends/on-machine.nix
       ];
       vars.settings.on-machine.enable = true;
+      environment.systemPackages = [
+        pkgs.expect
+        # expect script to drive generate-vars interactively.
+        # prompts appear in attribute-name order: aamulti, hidden, line.
+        (pkgs.writeScriptBin "run-generate-vars" ''
+          #!${pkgs.expect}/bin/expect -f
+          set timeout 30
+          spawn generate-vars
+          expect "press control-d to finish"
+          send "multi line content1\rmulti line content2\r"
+          send "\x04"
+          expect "doesn't show the input"
+          send "hidden prompt content\r"
+          expect "a simple line prompt"
+          send "simple prompt content\r"
+          expect eof
+        '')
+      ];
       vars.generators = {
         simple = {
           files.simple = { };
@@ -65,53 +83,27 @@
       };
     };
 
-  testScript =
-    { nodes, ... }:
-    ''
-      import subprocess
-      from pathlib import Path
+  testScript = ''
+    start_all()
 
-      process = subprocess.Popen(
-        ["${nodes.machine.config.system.build.generate-vars}/bin/generate-vars"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-        env={
-          "OUT_DIR": "./vars",
-        },
-      )
+    # The generate-vars service fails because prompts need interactive input.
+    # Wait for it to finish, then run manually with expect.
+    machine.wait_for_unit("multi-user.target")
+    machine.systemctl("is-active generate-vars.service || true")
 
-      # Function to check for expected outputs and send corresponding texts
+    machine.succeed("run-generate-vars")
 
-      def interact_with_process(process, interactions):
-          while interactions:
-              output = process.stdout.readline()
-              if output:
-                  print(output.strip())  # Print the output for debugging
-                  for expected_output, text_to_send in interactions:
-                      if expected_output in output:
-                          print("sending", text_to_send)
-                          process.stdin.write(text_to_send + '\n')
-                          process.stdin.flush()
-                          interactions.remove((expected_output, text_to_send))
-                          break
+    # Verify non-prompt generators
+    machine.succeed("grep -q simple /etc/vars/secret/simple/simple")
+    machine.succeed("grep -q a /etc/vars/secret/a/a")
+    out = machine.succeed("cat /etc/vars/secret/b/b")
+    assert "a\n" in out, f"b should contain a's output, got: {out}"
+    assert "b" in out, f"b should contain 'b', got: {out}"
 
-      interactions = [
-          ("a simple line prompt", "simple prompt content"),
-          ("a prompt that doesn't show the input", "hidden prompt content"),
-          ("press control-d to finish", f"multi line content1\nmulti line content2\n\n{chr(4)}\n"),
-          ("another prompt after EOF", "another prompt content"),
-      ]
-
-      # Interact with the process
-      interact_with_process(process, interactions)
-
-      # Wait for the process to complete
-      process.wait()
-
-      vars_folder = Path("vars")
-      print(list(vars_folder.glob("*")))
-      assert((vars_folder / "secret" /  "a" / "a").exists())
-
-    '';
+    # Verify prompt-based generator
+    machine.succeed("grep -q 'simple prompt content' /etc/vars/secret/prompts/prompt_line")
+    machine.succeed("grep -q 'hidden prompt content' /etc/vars/secret/prompts/prompt_hidden")
+    machine.succeed("grep -q 'multi line content1' /etc/vars/secret/prompts/prompt_multiline")
+    machine.succeed("grep -q 'multi line content2' /etc/vars/secret/prompts/prompt_multiline")
+  '';
 }

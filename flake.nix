@@ -16,7 +16,6 @@
     in {
       nixosModules.default = { imports = [ ./options.nix ]; };
       nixosModules.backend-on-machine = { imports = [ ./backends/on-machine.nix ]; };
-      # TODO fix tests
       checks = forAllSystems (system: let
         tests = {
           testing = inputs.nixpkgs.lib.nixos.runTest {
