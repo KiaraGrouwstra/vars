@@ -48,7 +48,9 @@ in
     `checkFileExists`
 
     : `gen -> file -> string` -- shell snippet that sets exit code 0 when
-      the file already exists in the backend store
+      the file already exists in the backend store. It is used as an `if`
+      condition, so surrounding whitespace is trimmed off; the snippet must
+      be a single command, though it may be spread over several lines.
 
     `fetchDependency`
 
@@ -85,7 +87,7 @@ in
             all_files_present=true
             echo "Checking vars for ${gen.name}..."
             ${lib.concatMapStringsSep "\n" (file: ''
-              if ${checkFileExists gen file}; then
+              if ${lib.trim (checkFileExists gen file)}; then
                 all_files_missing=false
               else
                 all_files_present=false
